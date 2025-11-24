@@ -1,9 +1,10 @@
 pipeline {
     agent any
 
-    environment {
-        AWS_SHARED_CREDENTIALS_FILE = "${WORKSPACE}/.aws/credentials"
-        ANSIBLE_HOST_KEY_CHECKING = "False"
+     environment {
+        AWS_ACCESS_KEY_ID     = credentials('aws-creds').AccessKey
+        AWS_SECRET_ACCESS_KEY = credentials('aws-creds').Secret
+        AWS_DEFAULT_REGION    = "ap-south-1"
     }
 
     stages {
