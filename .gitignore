@@ -1,0 +1,17 @@
+# Ignore Terraform junk
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
+*.pem
+*.zip
+*.gz
+
+# Ignore provider files
+terraform/.terraform/
+
+# Ansible
+__pycache__/
+
+# OS garbage
+.DS_Store
