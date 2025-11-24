@@ -1,12 +1,6 @@
 pipeline {
     agent any
 
-     environment {
-        AWS_ACCESS_KEY_ID     = credentials('aws-creds').AccessKey
-        AWS_SECRET_ACCESS_KEY = credentials('aws-creds').Secret
-        AWS_DEFAULT_REGION    = "ap-south-1"
-    }
-
     stages {
 
         stage('Checkout') {
@@ -15,35 +9,24 @@ pipeline {
             }
         }
 
-        stage('Setup AWS Credentials') {
-            steps {
-                withCredentials([aws(credentialsId: 'aws-creds', region: 'ap-south-1')]) {
-                    sh '''
-                        mkdir -p ~/.aws
-                        cat > ~/.aws/credentials <<EOF
-[default]
-aws_access_key_id=${AWS_ACCESS_KEY_ID}
-aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}
-EOF
-                    '''
-                }
-            }
-        }
-
         stage('Terraform Init') {
             steps {
-                dir('terraform') {
-                    sh 'terraform init -input=false'
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+                    sh '''
+                        aws sts get-caller-identity
+                        cd terraform
+                        terraform init
+                    '''
                 }
             }
         }
 
         stage('Terraform Validate') {
             steps {
-                dir('terraform') {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh '''
-                    terraform fmt -recursive
-                    terraform validate
+                        cd terraform
+                        terraform validate
                     '''
                 }
             }
@@ -51,55 +34,27 @@ EOF
 
         stage('Terraform Plan') {
             steps {
-                dir('terraform') {
-                    sh 'terraform plan -out=tfplan'
-                }
-            }
-        }
-
-        stage('Approval') {
-            steps {
-                timeout(time: 10, unit: 'MINUTES') {
-                    input message: "Approve Terraform Apply?"
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+                    sh '''
+                        cd terraform
+                        terraform plan -out=tfplan
+                    '''
                 }
             }
         }
 
         stage('Terraform Apply') {
-            steps {
-                dir('terraform') {
-                    sh 'terraform apply -auto-approve tfplan'
-                }
+            when {
+                branch 'main'
             }
-        }
-
-        stage('Export Terraform Outputs') {
             steps {
-                dir('terraform') {
-                    sh 'terraform output -json > ../ansible/terraform.json'
-                }
-            }
-        }
-
-        stage('Ansible Deploy') {
-            steps {
-                sshagent(credentials: ['prometheus-key']) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh '''
-                        cd ansible
-                        ansible-playbook playbooks/install_tools.yml
-                        ansible-playbook playbooks/configure_bastion.yml
+                        cd terraform
+                        terraform apply -auto-approve
                     '''
                 }
             }
-        }
-    }
-
-    post {
-        success {
-            echo "🎉 Deployment Successful!"
-        }
-        failure {
-            echo "❌ Deployment Failed"
         }
     }
 }
