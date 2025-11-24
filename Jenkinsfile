@@ -123,20 +123,43 @@ pipeline {
 
             steps {
                 sh '''
-                    set -e
-                    BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
+    set -e
 
-                    echo "Checking Prometheus endpoint..."
-                    curl -I --max-time 10 http://$BASTION/prometheus/ || true
-                '''
-            }
-        }
-    }
+    if [ ! -f ansible/terraform.json ]; then
+        echo "terraform.json missing - infra not created"
+        exit 1
+    fi
 
-    post {
-        always {
-            echo "Pipeline finished."
-            echo "URL: ${env.BUILD_URL}"
-        }
-    }
-}
+    BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
+    BUCKET=$(jq -r '.monitoring_bucket_name.value' ansible/terraform.json)
+    REGION=$(jq -r '.aws_region.value' ansible/terraform.json)
+
+    chmod 600 "$SSH_KEY_FILE"
+
+    cd ansible
+
+    export ANSIBLE_ROLES_PATH="$(pwd)/roles"
+
+    # 🔥 AUTO-GENERATE SSH PROXY CONFIG
+    cat > ssh_proxy.cfg <<EOF
+Host bastion
+    HostName ${BASTION}
+    User ubuntu
+    IdentityFile ${SSH_KEY_FILE}
+    StrictHostKeyChecking=no
+
+Host tools-*
+    ProxyJump bastion
+    User ubuntu
+    IdentityFile ${SSH_KEY_FILE}
+    StrictHostKeyChecking=no
+EOF
+
+    export ANSIBLE_SSH_ARGS="-F $(pwd)/ssh_proxy.cfg"
+
+    ansible-playbook \
+      -i inventory_aws_ec2.yml \
+      playbooks/install_tools.yml \
+      --private-key "$SSH_KEY_FILE" \
+      --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
+'''
