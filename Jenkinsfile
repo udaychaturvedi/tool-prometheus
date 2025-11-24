@@ -2,14 +2,13 @@ pipeline {
     agent any
 
     environment {
-    TF_DIR = "terraform"
-    ANSIBLE_DIR = "ansible"
-    TF_JSON = "ansible/terraform.json"
+        TF_DIR = "terraform"
+        ANSIBLE_DIR = "ansible"
+        TF_JSON = "ansible/terraform.json"
 
-    AWS_CREDS = "aws-creds"
-    SSH_KEY_ID = "jenkins"   // <<< FIXED
-}
-
+        AWS_CREDS = "aws-creds"
+        SSH_KEY_ID = "ubuntu"    // <<< FIXED (your real ID)
+    }
 
     options {
         timestamps()
@@ -18,7 +17,9 @@ pipeline {
     stages {
 
         stage('Checkout') {
-            steps { checkout scm }
+            steps {
+                checkout scm
+            }
         }
 
         stage('Terraform Validate') {
@@ -40,12 +41,12 @@ pipeline {
                 script {
                     env.ACTION = input(
                         id: 'action_input',
-                        message: 'Terraform: Choose what to do',
+                        message: 'Terraform: What do you want to do?',
                         parameters: [
                             choice(name: 'ACTION', choices: ['apply','destroy'])
                         ]
                     )
-                    echo "Action selected = ${env.ACTION}"
+                    echo "User selected: ${env.ACTION}"
                 }
             }
         }
@@ -53,8 +54,8 @@ pipeline {
         stage('Terraform Apply/Destroy') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDS]]) {
-
                     script {
+
                         if (env.ACTION == "apply") {
                             sh """
                                 set -e
@@ -79,13 +80,20 @@ pipeline {
 
         stage('Run Ansible') {
             when { expression { env.ACTION == 'apply' } }
+
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: SSH_KEY_ID, keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: SSH_KEY_ID,
+                    keyFileVariable: 'SSH_KEY_FILE',
+                    usernameVariable: 'SSH_USER'
+                )]) {
+
                     sh '''
                         set -e
+
                         if [ ! -f ansible/terraform.json ]; then
-                          echo "terraform.json missing — infra not created"
-                          exit 1
+                            echo "terraform.json missing - infra not created"
+                            exit 1
                         fi
 
                         BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
@@ -96,10 +104,10 @@ pipeline {
 
                         cd ansible
                         ansible-playbook \
-                          -i inventory_aws_ec2.yml \
-                          playbooks/install_tools.yml \
-                          --private-key "$SSH_KEY_FILE" \
-                          --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
+                            -i inventory_aws_ec2.yml \
+                            playbooks/install_tools.yml \
+                            --private-key "$SSH_KEY_FILE" \
+                            --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
                     '''
                 }
             }
