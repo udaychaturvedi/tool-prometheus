@@ -13,7 +13,6 @@ pipeline {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh '''
-                        aws sts get-caller-identity
                         cd terraform
                         terraform init
                     '''
@@ -32,26 +31,27 @@ pipeline {
             }
         }
 
-        stage('Terraform Plan') {
+        stage('Choose Action') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-                    sh '''
-                        cd terraform
-                        terraform plan -out=tfplan
-                    '''
+                script {
+                    ACTION = input message: 'Terraform Action?', parameters: [
+                        choice(name: 'ACTION', choices: ['apply', 'destroy'], description: 'Choose what to do:')
+                    ]
                 }
             }
         }
 
-        stage('Terraform Apply') {
-            when {
-                branch 'main'
-            }
+        stage('Terraform Apply/Destroy') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh '''
                         cd terraform
-                        terraform apply -auto-approve
+                        if [ "$ACTION" = "apply" ]; then
+                            terraform plan -out=tfplan
+                            terraform apply -auto-approve tfplan
+                        elif [ "$ACTION" = "destroy" ]; then
+                            terraform destroy -auto-approve
+                        fi
                     '''
                 }
             }
