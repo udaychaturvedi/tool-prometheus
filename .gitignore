@@ -1,8 +1,7 @@
 .terraform/
+**/.terraform/
 *.tfstate
 *.tfstate.backup
 *.pem
 *.zip
 *.gz
-__pycache__/
-.DS_Store
