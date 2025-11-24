@@ -2,37 +2,30 @@ pipeline {
     agent any
 
     environment {
-        TF_DIR = "terraform"
-        ANSIBLE_DIR = "ansible"
-        TF_JSON = "ansible/terraform.json"
+    TF_DIR = "terraform"
+    ANSIBLE_DIR = "ansible"
+    TF_JSON = "ansible/terraform.json"
 
-        AWS_CREDS = "aws-creds"
-        SSH_KEY_ID = "jenkins-ssh-key"
-    }
+    AWS_CREDS = "aws-creds"
+    SSH_KEY_ID = "jenkins"   // <<< FIXED
+}
+
 
     options {
         timestamps()
-        buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '50'))
-    }
-
-    parameters {
-        choice(name: 'ACTION', choices: ['apply','destroy'], description: 'Apply or Destroy infra')
     }
 
     stages {
 
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
-        stage('Prechecks') {
+        stage('Terraform Validate') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDS]]) {
                     sh '''
                         set -e
-                        echo "===== Terraform Prechecks ====="
                         cd terraform
                         terraform fmt -recursive || true
                         terraform init -backend=false
@@ -42,12 +35,27 @@ pipeline {
             }
         }
 
+        stage('Choose Action') {
+            steps {
+                script {
+                    env.ACTION = input(
+                        id: 'action_input',
+                        message: 'Terraform: Choose what to do',
+                        parameters: [
+                            choice(name: 'ACTION', choices: ['apply','destroy'])
+                        ]
+                    )
+                    echo "Action selected = ${env.ACTION}"
+                }
+            }
+        }
+
         stage('Terraform Apply/Destroy') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDS]]) {
-                    script {
 
-                        if (params.ACTION == "apply") {
+                    script {
+                        if (env.ACTION == "apply") {
                             sh """
                                 set -e
                                 cd terraform
@@ -67,25 +75,17 @@ pipeline {
                     }
                 }
             }
-            post {
-                success {
-                    archiveArtifacts artifacts: "terraform/tfplan", onlyIfSuccessful: true
-                }
-            }
         }
 
         stage('Run Ansible') {
-            when { expression { params.ACTION == 'apply' } }
+            when { expression { env.ACTION == 'apply' } }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: SSH_KEY_ID, keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
-
                     sh '''
                         set -e
-
-                        echo "===== Loading Terraform Outputs ====="
                         if [ ! -f ansible/terraform.json ]; then
-                            echo "ERROR: terraform.json missing"
-                            exit 1
+                          echo "terraform.json missing — infra not created"
+                          exit 1
                         fi
 
                         BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
@@ -94,9 +94,7 @@ pipeline {
 
                         chmod 600 "$SSH_KEY_FILE"
 
-                        echo "Running Ansible..."
                         cd ansible
-
                         ansible-playbook \
                           -i inventory_aws_ec2.yml \
                           playbooks/install_tools.yml \
@@ -108,14 +106,15 @@ pipeline {
         }
 
         stage('Health Check') {
-            when { expression { params.ACTION == 'apply'} }
+            when { expression { env.ACTION == 'apply' } }
+
             steps {
                 sh '''
                     set -e
                     BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
-                    
-                    echo "Checking Prometheus: http://$BASTION/prometheus/"
-                    curl -I --max-time 10 http://$BASTION/prometheus/ || echo "Prometheus may not be ready yet"
+
+                    echo "Checking Prometheus endpoint..."
+                    curl -I --max-time 10 http://$BASTION/prometheus/ || true
                 '''
             }
         }
@@ -123,7 +122,8 @@ pipeline {
 
     post {
         always {
-            echo "Pipeline finished. URL: ${env.BUILD_URL}"
+            echo "Pipeline finished."
+            echo "URL: ${env.BUILD_URL}"
         }
     }
 }
