@@ -78,40 +78,45 @@ pipeline {
             }
         }
 
-        stage('Run Ansible') {
-            when { expression { env.ACTION == 'apply' } }
+      stage('Run Ansible') {
+    when { expression { env.ACTION == 'apply' } }
 
-            steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: SSH_KEY_ID,
-                    keyFileVariable: 'SSH_KEY_FILE',
-                    usernameVariable: 'SSH_USER'
-                )]) {
+    steps {
+        withCredentials([sshUserPrivateKey(
+            credentialsId: SSH_KEY_ID,
+            keyFileVariable: 'SSH_KEY_FILE',
+            usernameVariable: 'SSH_USER'
+        )]) {
 
-                    sh '''
-                        set -e
+            sh '''
+                set -e
 
-                        if [ ! -f ansible/terraform.json ]; then
-                            echo "terraform.json missing - infra not created"
-                            exit 1
-                        fi
+                if [ ! -f ansible/terraform.json ]; then
+                    echo "terraform.json missing - infra not created"
+                    exit 1
+                fi
 
-                        BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
-                        BUCKET=$(jq -r '.monitoring_bucket_name.value' ansible/terraform.json)
-                        REGION=$(jq -r '.aws_region.value' ansible/terraform.json)
+                BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
+                BUCKET=$(jq -r '.monitoring_bucket_name.value' ansible/terraform.json)
+                REGION=$(jq -r '.aws_region.value' ansible/terraform.json)
 
-                        chmod 600 "$SSH_KEY_FILE"
+                chmod 600 "$SSH_KEY_FILE"
 
-                        cd ansible
-                        ansible-playbook \
-                            -i inventory_aws_ec2.yml \
-                            playbooks/install_tools.yml \
-                            --private-key "$SSH_KEY_FILE" \
-                            --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
-                    '''
-                }
-            }
+                cd ansible
+
+                # FIX: Point Ansible to the correct roles folder
+                export ANSIBLE_ROLES_PATH="$(pwd)/roles"
+
+                ansible-playbook \
+                  -i inventory_aws_ec2.yml \
+                  playbooks/install_tools.yml \
+                  --private-key "$SSH_KEY_FILE" \
+                  --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
+            '''
         }
+    }
+}
+
 
         stage('Health Check') {
             when { expression { env.ACTION == 'apply' } }
