@@ -1,0 +1,9 @@
+---
+- name: Configure Bastion Nginx Reverse Proxy for Monitoring
+  hosts: role_bastion
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - bastion_nginx
+

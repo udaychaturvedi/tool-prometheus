@@ -1,0 +1,90 @@
+---
+- name: Create Alertmanager user
+  user:
+    name: alertmanager
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create Alertmanager directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: alertmanager
+    group: alertmanager
+  loop:
+    - /etc/alertmanager
+    - /var/lib/alertmanager
+
+- name: Download Alertmanager
+  get_url:
+    url: "https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz"
+    dest: /tmp/alertmanager.tar.gz
+
+- name: Extract Alertmanager
+  unarchive:
+    src: /tmp/alertmanager.tar.gz
+    dest: /tmp
+    remote_src: true
+
+- name: Copy Alertmanager binaries
+  copy:
+    src: "/tmp/alertmanager-0.27.0.linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: '0755'
+    remote_src: yes
+  loop:
+    - alertmanager
+    - amtool
+  notify: restart alertmanager
+
+- name: Install Alertmanager config
+  template:
+    src: alertmanager.yml.j2
+    dest: /etc/alertmanager/alertmanager.yml
+    owner: alertmanager
+    group: alertmanager
+    mode: 0644
+  notify: restart alertmanager
+
+- name: Install Alertmanager systemd service
+  template:
+    src: alertmanager.service.j2
+    dest: /etc/systemd/system/alertmanager.service
+    mode: "0644"
+  notify: restart alertmanager
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable Alertmanager
+  systemd:
+    name: alertmanager
+    state: started
+    enabled: yes
+
+- name: Ensure awscli installed
+  apt:
+    name: awscli
+    state: present
+    update_cache: yes
+
+- name: Backup Alertmanager data script
+  copy:
+    dest: /usr/local/bin/alertmanager_backup_to_s3.sh
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      aws s3 sync /var/lib/alertmanager s3://${alertmanager_bucket} --region ${aws_region}
+
+- name: Create cron job for Alertmanager backup (every 30 minutes)
+  cron:
+    name: "alertmanager-s3-backup"
+    minute: "*/30"
+    user: root
+    job: "/usr/local/bin/alertmanager_backup_to_s3.sh >> /var/log/alertmanager_backup.log 2>&1"
+      
+

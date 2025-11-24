@@ -1,0 +1,19 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'udaysharma5445@gmail.com'
+  smtp_auth_username: 'udaysharma5445@gmail.com'
+  smtp_auth_password: 'ahgc zznb qtvc ogtj'
+  smtp_require_tls: true
+
+route:
+  receiver: 'gmail-alerts'
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 3h
+
+receivers:
+  - name: 'gmail-alerts'
+    email_configs:
+      - to: 'udaysharma5445@gmail.com'
+        send_resolved: true

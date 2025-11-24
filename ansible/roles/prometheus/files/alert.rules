@@ -1,0 +1,10 @@
+groups:
+  - name: basic_alerts
+    rules:
+      - alert: HighCPU
+        expr: node_cpu_seconds_total{mode="idle"} < 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          description: "High CPU detected"

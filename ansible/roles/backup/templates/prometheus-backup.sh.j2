@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+S3_BUCKET="{{ s3_bucket }}"
+TSDB_PATH="/var/lib/prometheus"
+
+timestamp=$(date +%F-%H-%M)
+
+tar -czf /tmp/prometheus-backup-$timestamp.tar.gz $TSDB_PATH
+
+aws s3 cp /tmp/prometheus-backup-$timestamp.tar.gz s3://$S3_BUCKET/prometheus/
+rm -f /tmp/prometheus-backup-$timestamp.tar.gz
+

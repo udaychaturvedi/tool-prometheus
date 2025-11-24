@@ -1,0 +1,21 @@
+plugin: amazon.aws.aws_ec2
+regions:
+  - ap-south-1
+
+filters:
+  tag:Role: ["tools", "bastion"]
+
+hostnames:
+  - private-ip-address
+
+compose:
+  ansible_host: private_ip_address
+  ansible_ssh_common_args: "-o ProxyJump=ubuntu@35.154.102.130 -o StrictHostKeyChecking=no -o IdentityFile=~/.ssh/prometheus.pem"
+
+keyed_groups:
+  - key: tags.Role
+    prefix: role
+    separator: "_"
+
+cache: yes
+cache_timeout: 300 

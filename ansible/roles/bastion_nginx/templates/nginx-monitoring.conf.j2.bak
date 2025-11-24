@@ -1,0 +1,61 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Create upstreams for Prometheus and Alertmanager from role_tools group
+upstream prometheus_backend {
+{% for host in groups['role_tools'] %}
+  server {{ hostvars[host].ansible_host }}:9090;
+{% endfor %}
+}
+
+upstream alertmanager_backend {
+{% for host in groups['role_tools'] %}
+  server {{ hostvars[host].ansible_host }}:9093;
+{% endfor %}
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+
+    # PROMETHEUS (served under /prometheus/)
+    location /prometheus/ {
+        proxy_pass http://prometheus_backend;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Fix Prometheus asset paths that are absolute
+        sub_filter_types text/html application/javascript text/css;
+        sub_filter 'href="/'  'href="/prometheus/';
+        sub_filter 'src="/'   'src="/prometheus/';
+        sub_filter_once off;
+
+        proxy_redirect off;
+    }
+
+    location = /prometheus {
+        return 302 /prometheus/;
+    }
+
+    # ALERTMANAGER
+    location /alertmanager/ {
+        proxy_pass http://alertmanager_backend;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_redirect off;
+    }
+
+    location = / {
+        return 200 "Monitoring bastion reverse proxy\n";
+        add_header Content-Type text/plain;
+    }
+}

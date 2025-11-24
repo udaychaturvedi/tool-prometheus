@@ -1,0 +1,41 @@
+---
+- name: Install AWS CLI
+  apt:
+    name: awscli
+    state: present
+    update_cache: yes
+
+- name: Create backup script directory
+  file:
+    path: /opt/monitoring-backup
+    state: directory
+    mode: '0755'
+
+- name: Deploy Prometheus backup script
+  template:
+    src: prometheus-backup.sh.j2
+    dest: /opt/monitoring-backup/prometheus-backup.sh
+    mode: '0755'
+
+- name: Deploy Alertmanager backup script
+  template:
+    src: alertmanager-backup.sh.j2
+    dest: /opt/monitoring-backup/alertmanager-backup.sh
+    mode: '0755'
+
+- name: Cronjob for Prometheus backup
+  cron:
+    name: "prometheus-backup"
+    user: root
+    job: "bash /opt/monitoring-backup/prometheus-backup.sh >> /var/log/prometheus-backup.log 2>&1"
+    hour: "3"
+    minute: "0"
+
+- name: Cronjob for Alertmanager backup
+  cron:
+    name: "alertmanager-backup"
+    user: root
+    job: "bash /opt/monitoring-backup/alertmanager-backup.sh >> /var/log/alertmanager-backup.log 2>&1"
+    hour: "3"
+    minute: "30"
+

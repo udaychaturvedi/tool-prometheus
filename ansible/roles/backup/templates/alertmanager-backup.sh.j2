@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+S3_BUCKET="{{ s3_bucket }}"
+DATA_PATH="/var/lib/alertmanager"
+
+timestamp=$(date +%F-%H-%M)
+
+tar -czf /tmp/alertmanager-backup-$timestamp.tar.gz $DATA_PATH
+
+aws s3 cp /tmp/alertmanager-backup-$timestamp.tar.gz s3://$S3_BUCKET/alertmanager/
+rm -f /tmp/alertmanager-backup-$timestamp.tar.gz
+

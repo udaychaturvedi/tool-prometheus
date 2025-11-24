@@ -1,0 +1,59 @@
+groups:
+- name: node_alerts
+  rules:
+  - alert: HighCPUUsage
+    expr: avg(rate(node_cpu_seconds_total{mode!="idle"}[5m])) * 100 > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU usage on {{ '{{ $labels.instance }}' }}"
+      description: "CPU usage is above 80%."
+
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High memory usage on {{ '{{ $labels.instance }}' }}"
+      description: "Less than 10% memory available."
+
+  - alert: HighDiskUsage
+    expr: (node_filesystem_free_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 < 15
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High disk usage on {{ '{{ $labels.instance }}' }}"
+      description: "Less than 15% disk space remaining."
+
+  - alert: NodeDown
+    expr: up{job="node_exporter"} == 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Node down: {{ '{{ $labels.instance }}' }}"
+      description: "The node exporter has stopped responding."
+
+- name: service_alerts
+  rules:
+  - alert: PrometheusDown
+    expr: up{job="prometheus"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Prometheus is down!"
+      description: "Prometheus is not reachable."
+
+  - alert: AlertmanagerDown
+    expr: up{job="alertmanager"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Alertmanager down!"
+      description: "Alertmanager is not reachable."
+

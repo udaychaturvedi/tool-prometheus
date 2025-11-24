@@ -1,0 +1,50 @@
+---
+- name: Ensure nginx installed
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+
+- name: Ensure /etc/nginx/sites-available exists
+  file:
+    path: /etc/nginx/sites-available
+    state: directory
+
+- name: Determine first tools host private IP
+  set_fact:
+    tools_private_ip: "{{ hostvars[ groups['role_tools'][0] ].ansible_host | default(groups['role_tools'][0]) }}"
+  when: groups['role_tools'] is defined and groups['role_tools'] | length > 0
+
+- name: Fail if no tools instance found
+  fail:
+    msg: "No hosts found in group role_tools (Prometheus/Grafana/Alertmanager). Ensure dynamic inventory is working."
+  when: tools_private_ip is not defined
+
+- name: Upload nginx reverse proxy config
+  template:
+    src: nginx-monitoring.conf.j2
+    dest: /etc/nginx/sites-available/monitoring.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart nginx
+
+- name: Ensure site enabled
+  file:
+    src: /etc/nginx/sites-available/monitoring.conf
+    dest: /etc/nginx/sites-enabled/monitoring.conf
+    state: link
+  notify: restart nginx
+
+- name: Remove default nginx site if present
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: restart nginx
+
+- name: Test nginx config
+  command: nginx -t
+  register: nginx_test
+  failed_when: nginx_test.rc != 0
+  changed_when: false
+

@@ -1,0 +1,123 @@
+---
+
+- name: Create Prometheus user
+  user:
+    name: prometheus
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create Prometheus directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+  loop:
+    - /etc/prometheus
+    - /var/lib/prometheus
+
+- name: Download Prometheus
+  get_url:
+    url: "https://github.com/prometheus/prometheus/releases/download/v2.53.1/prometheus-2.53.1.linux-amd64.tar.gz"
+    dest: /tmp/prometheus.tar.gz
+    mode: "0644"
+
+- name: Extract Prometheus
+  unarchive:
+    src: /tmp/prometheus.tar.gz
+    dest: /tmp
+    remote_src: true
+
+- name: Copy Prometheus binaries
+  copy:
+    src: "/tmp/prometheus-2.53.1.linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    remote_src: yes
+    mode: "0755"
+  loop:
+    - prometheus
+    - promtool
+  notify: restart prometheus
+
+- name: Copy Prometheus console templates
+  copy:
+    src: "/tmp/prometheus-2.53.1.linux-amd64/consoles"
+    dest: "/etc/prometheus"
+    remote_src: true
+
+- name: Copy Prometheus console libraries
+  copy:
+    src: "/tmp/prometheus-2.53.1.linux-amd64/console_libraries"
+    dest: "/etc/prometheus"
+    remote_src: true
+
+- name: Install Prometheus config
+  template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: restart prometheus
+
+- name: Install alert rules
+  template:
+    src: alert_rules.yml.j2
+    dest: /etc/prometheus/alert.rules
+    owner: prometheus
+    group: prometheus
+    mode: 0644
+  notify: restart prometheus
+
+- name: Install Prometheus systemd service
+  template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    mode: "0644"
+  notify: restart prometheus
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable & start Prometheus service
+  systemd:
+    name: prometheus
+    enabled: yes
+    state: started
+- name: Ensure awscli installed
+  apt:
+    name: awscli
+    state: present
+    update_cache: yes
+
+- name: Create backup script for Prometheus snapshot and sync to S3
+  copy:
+    dest: /usr/local/bin/prometheus_backup_to_s3.sh
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+      SNAP_DIR="/tmp/prom_snapshot_${TIMESTAMP}"
+      mkdir -p "${SNAP_DIR}"
+      # create a Prometheus snapshot (uses prometheus HTTP API)
+      curl -s -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r .data.name > /tmp/last_snapshot_name || true
+      SNAPNAME=$(cat /tmp/last_snapshot_name || echo "")
+      if [ -n "${SNAPNAME}" ]; then
+        SNAPPATH="/var/lib/prometheus/snapshots/${SNAPNAME}"
+        aws s3 sync "${SNAPPATH}" "s3://${monitoring_bucket}" --region ${aws_region}
+      else
+        echo "No snapshot created"
+      fi
+
+- name: Create cron job for Prometheus backup (every 6 hours)
+  cron:
+    name: "prometheus-s3-backup"
+    minute: "0"
+    hour: "*/6"
+    user: root
+    job: "/usr/local/bin/prometheus_backup_to_s3.sh >> /var/log/prometheus_backup.log 2>&1"
+

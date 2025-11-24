@@ -1,0 +1,9 @@
+---
+- name: Install Monitoring Stack (Prometheus, Grafana, Alertmanager, Node Exporter)
+  hosts: role_tools
+  become: yes
+
+  roles:
+    - node_exporter
+    - prometheus
+    - alertmanager

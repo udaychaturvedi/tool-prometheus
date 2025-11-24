@@ -1,0 +1,17 @@
+{
+  "bastion_public_ip": {
+    "sensitive": false,
+    "type": "string",
+    "value": "35.154.102.130"
+  },
+  "tools_private_ips": {
+    "sensitive": false,
+    "type": [
+      "list",
+      "string"
+    ],
+    "value": [
+      "10.0.102.23"
+    ]
+  }
+}
