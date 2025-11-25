@@ -59,7 +59,7 @@ resource "aws_subnet" "private" {
 
   vpc_id            = aws_vpc.main.id
   cidr_block        = each.value
-  availability_zone = var.azs[1]
+  availability_zone = var.azs[0]   # FIX: Same AZ as bastion/NAT
 
   tags = {
     Name = "${var.project_name}-private-${replace(each.value, "/", "-")}"
