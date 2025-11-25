@@ -1,13 +1,13 @@
 node {
 
-    // ---------------------------
-    // GLOBAL ENV VARS
-    // ---------------------------
-    env.TF_DIR = "terraform"
+    // ------------ configuration --------------
+    env.TF_DIR      = "terraform"
     env.ANSIBLE_DIR = "ansible"
-    env.TF_JSON = "ansible/terraform.json"
-    env.AWS_CREDS = "aws-creds"
-    env.SSH_KEY_ID = "ubuntu"   // your actual Jenkins credential ID
+    env.TF_JSON     = "ansible/terraform.json"
+
+    // credential IDs you have in Jenkins
+    env.AWS_CREDS   = "aws-creds"
+    env.SSH_KEY_ID  = "ubuntu"
 
     timestamps {
 
@@ -15,9 +15,6 @@ node {
             checkout scm
         }
 
-        // ---------------------------
-        // VALIDATE TERRAFORM
-        // ---------------------------
         stage("Terraform Validate") {
             withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDS]]) {
                 sh """
@@ -30,24 +27,18 @@ node {
             }
         }
 
-        // ---------------------------
-        // USER CHOICE AFTER VALIDATE
-        // ---------------------------
         stage("Choose Action") {
+            // ask the user after validate
             ACTION = input(
-                message: "Terraform: Choose action",
-                parameters: [choice(name: 'ACTION', choices: ['apply','destroy'])]
+                message: "Terraform: choose action",
+                parameters: [choice(name: 'ACTION', choices: ['apply','destroy'], description: 'apply or destroy')]
             )
-            echo "User selected action = ${ACTION}"
+            echo "User selected: ${ACTION}"
         }
 
-        // ---------------------------
-        // TERRAFORM APPLY OR DESTROY
-        // ---------------------------
         stage("Terraform Apply/Destroy") {
             withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDS]]) {
-                if (ACTION == "apply") {
-
+                if (ACTION == 'apply') {
                     sh """
                         set -e
                         cd ${TF_DIR}
@@ -56,9 +47,7 @@ node {
                         terraform apply -auto-approve tfplan
                         terraform output -json > ../${TF_JSON}
                     """
-
                 } else {
-
                     sh """
                         set -e
                         cd ${TF_DIR}
@@ -69,10 +58,8 @@ node {
             }
         }
 
-        // ---------------------------
-        // RUN ANSIBLE (ONLY IF APPLY)
-        // ---------------------------
-        if (ACTION == "apply") {
+        // Run Ansible only after apply
+        if (ACTION == 'apply') {
 
             stage("Run Ansible") {
                 withCredentials([sshUserPrivateKey(
@@ -81,24 +68,35 @@ node {
                     usernameVariable: 'SSH_USER'
                 )]) {
 
+                    // The entire work is inside a single shell script.
+                    // Important: all $ signs used in the shell are escaped (e.g. \$BASTION) so Groovy doesn't interpolate secrets.
                     sh """
                         set -e
 
-                        # Load Terraform outputs
-                        BASTION=\$(jq -r '.bastion_public_ip.value' ${TF_JSON})
-                        BUCKET=\$(jq -r '.monitoring_bucket_name.value' ${TF_JSON})
-                        REGION=\$(jq -r '.aws_region.value' ${TF_JSON})
+                        # ensure terraform outputs exist
+                        if [ ! -f ${TF_JSON} ]; then
+                            echo "ERROR: ${TF_JSON} not found. Terraform may have failed."
+                            exit 1
+                        fi
 
-                        chmod 600 "$SSH_KEY_FILE"
+                        # read outputs (shell variables)
+                        BASTION=\$(jq -r '.bastion_public_ip.value' ${TF_JSON})
+                        BUCKET=\$(jq -r '.monitoring_bucket_name.value' ${TF_JSON} 2>/dev/null || echo "null")
+                        REGION=\$(jq -r '.aws_region.value' ${TF_JSON} 2>/dev/null || echo "null")
+
+                        echo "Using bastion=\$BASTION bucket=\$BUCKET region=\$REGION"
+
+                        # ensure the SSH key file has secure perms
+                        chmod 600 "\$SSH_KEY_FILE"
 
                         cd ${ANSIBLE_DIR}
 
                         export ANSIBLE_ROLES_PATH="\$(pwd)/roles"
                         export ANSIBLE_HOST_KEY_CHECKING=False
 
-                        # ---------------------------------------------------
-                        # Generate SSH Proxy Config (safe placeholders)
-                        # ---------------------------------------------------
+                        # -------------------------
+                        # Generate SSH proxy config safely using placeholders
+                        # -------------------------
 cat > ssh_proxy.cfg << 'EOF'
 Host bastion
     HostName BASTION_PLACEHOLDER
@@ -113,15 +111,20 @@ Host 10.*
     StrictHostKeyChecking=no
 EOF
 
-                        # Replace placeholders with actual values
+                        # Replace placeholders with actual runtime values (safe - executed in shell)
                         sed -i "s/BASTION_PLACEHOLDER/\$BASTION/" ssh_proxy.cfg
-                        sed -i "s#SSHKEY_PLACEHOLDER#$SSH_KEY_FILE#" ssh_proxy.cfg
+                        # use # as sep to allow slashes in path
+                        sed -i "s#SSHKEY_PLACEHOLDER#\$SSH_KEY_FILE#" ssh_proxy.cfg
 
                         export ANSIBLE_SSH_ARGS="-F \$(pwd)/ssh_proxy.cfg"
 
-                        # ---------------------------------------------------
-                        # Run Ansible
-                        # ---------------------------------------------------
+                        echo "Using ANSIBLE_SSH_ARGS=\$ANSIBLE_SSH_ARGS"
+                        echo "SSH config:"
+                        sed -n '1,160p' ssh_proxy.cfg || true
+
+                        # -------------------------
+                        # Run the Ansible playbook (do not pass --private-key; ssh config controls it)
+                        # -------------------------
                         ansible-playbook \\
                           -i inventory_aws_ec2.yml \\
                           playbooks/install_tools.yml \\
@@ -130,18 +133,18 @@ EOF
                 }
             }
 
-            // ---------------------------
-            // HEALTH CHECK
-            // ---------------------------
             stage("Health Check") {
                 sh """
+                    set -e
                     BASTION=\$(jq -r '.bastion_public_ip.value' ${TF_JSON})
-                    echo "Checking Prometheus..."
-                    curl -I --max-time 10 http://\$BASTION/prometheus/ || true
+                    echo "Checking Prometheus endpoint on \$BASTION..."
+                    curl -I --max-time 10 http://\$BASTION/prometheus/ || echo "Prometheus check failed (may still be starting)."
                 """
             }
         }
 
-        echo "Pipeline Completed: ${env.BUILD_URL}"
+        stage("Finish") {
+            echo "Pipeline finished. Build URL: ${env.BUILD_URL}"
+        }
     }
 }
