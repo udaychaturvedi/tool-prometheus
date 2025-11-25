@@ -1,140 +1,44 @@
-pipeline {
-    agent any
+sh '''
+    set -e
 
-    environment {
-        TF_DIR = "terraform"
-        ANSIBLE_DIR = "ansible"
-        TF_JSON = "ansible/terraform.json"
+    if [ ! -f ansible/terraform.json ]; then
+        echo "terraform.json missing - infra not created"
+        exit 1
+    fi
 
-        AWS_CREDS = "aws-creds"
-        SSH_KEY_ID = "ubuntu"
-    }
+    BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
+    BUCKET=$(jq -r '.monitoring_bucket_name.value' ansible/terraform.json)
+    REGION=$(jq -r '.aws_region.value' ansible/terraform.json)
 
-    options {
-        timestamps()
-    }
+    chmod 600 "$SSH_KEY_FILE"
 
-    stages {
+    cd ansible
 
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
+    export ANSIBLE_ROLES_PATH="$(pwd)/roles"
+    export ANSIBLE_HOST_KEY_CHECKING=False
 
-        stage('Terraform Validate') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDS]]) {
-                    sh '''
-                        set -e
-                        cd terraform
-                        terraform fmt -recursive || true
-                        terraform init -backend=false
-                        terraform validate || true
-                    '''
-                }
-            }
-        }
+    # 🔥 Generate dynamic SSH config
+    cat > ssh_proxy.cfg <<EOF
+Host bastion
+    HostName ${BASTION}
+    User ubuntu
+    IdentityFile ${SSH_KEY_FILE}
+    StrictHostKeyChecking=no
 
-        stage('Choose Action') {
-            steps {
-                script {
-                    env.ACTION = input(
-                        id: 'action_input',
-                        message: 'Terraform: What do you want to do?',
-                        parameters: [
-                            choice(name: 'ACTION', choices: ['apply','destroy'])
-                        ]
-                    )
-                    echo "User selected: ${env.ACTION}"
-                }
-            }
-        }
+Host 10.*
+    ProxyJump bastion
+    User ubuntu
+    IdentityFile ${SSH_KEY_FILE}
+    StrictHostKeyChecking=no
+EOF
 
-        stage('Terraform Apply/Destroy') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDS]]) {
-                    script {
-                        if (env.ACTION == "apply") {
-                            sh """
-                                set -e
-                                cd terraform
-                                terraform init
-                                terraform plan -out=tfplan
-                                terraform apply -auto-approve tfplan
-                                terraform output -json > ../${TF_JSON}
-                            """
-                        } else {
-                            sh """
-                                set -e
-                                cd terraform
-                                terraform init
-                                terraform destroy -auto-approve
-                            """
-                        }
-                    }
-                }
-            }
-        }
+    # 🔥 Tell ansible to use SSH proxy config
+    export ANSIBLE_SSH_ARGS="-F $(pwd)/ssh_proxy.cfg"
 
-        stage('Run Ansible') {
-            when { expression { env.ACTION == 'apply' } }
-            steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: SSH_KEY_ID,
-                    keyFileVariable: 'SSH_KEY_FILE',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    sh '''
-                        set -e
-
-                        if [ ! -f ansible/terraform.json ]; then
-                            echo "terraform.json missing - infra not created"
-                            exit 1
-                        fi
-
-                        BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
-                        BUCKET=$(jq -r '.monitoring_bucket_name.value' ansible/terraform.json)
-                        REGION=$(jq -r '.aws_region.value' ansible/terraform.json)
-
-                        chmod 600 "$SSH_KEY_FILE"
-
-                        cd ansible
-
-                        export ANSIBLE_ROLES_PATH="$(pwd)/roles"
-
-                        # SSH override (does NOT modify repo files)
-                        export ANSIBLE_SSH_ARGS="-o ProxyJump=ubuntu@$BASTION -o IdentityFile=$SSH_KEY_FILE -o StrictHostKeyChecking=no"
-
-                        ansible-playbook \
-                            -i inventory_aws_ec2.yml \
-                            playbooks/install_tools.yml \
-                            --private-key "$SSH_KEY_FILE" \
-                            --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
-                    '''
-                }
-            }
-        }
-
-        stage('Health Check') {
-            when { expression { env.ACTION == 'apply' } }
-            steps {
-                sh '''
-                    set -e
-
-                    BASTION=$(jq -r '.bastion_public_ip.value' ansible/terraform.json)
-
-                    echo "Checking Prometheus endpoint..."
-                    curl -I --max-time 10 http://$BASTION/prometheus/ || true
-                '''
-            }
-        }
-    }
-
-    post {
-        always {
-            echo "Pipeline finished."
-            echo "URL: ${env.BUILD_URL}"
-        }
-    }
-}
+    # 🔥 DO NOT PASS --private-key, let SSH config handle it
+    
+    ansible-playbook \
+      -i inventory_aws_ec2.yml \
+      playbooks/install_tools.yml \
+      --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
+'''
