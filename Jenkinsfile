@@ -80,14 +80,12 @@ pipeline {
 
       stage('Run Ansible') {
     when { expression { env.ACTION == 'apply' } }
-
     steps {
         withCredentials([sshUserPrivateKey(
             credentialsId: SSH_KEY_ID,
             keyFileVariable: 'SSH_KEY_FILE',
             usernameVariable: 'SSH_USER'
         )]) {
-
             sh '''
                 set -e
 
@@ -104,14 +102,16 @@ pipeline {
 
                 cd ansible
 
-                # FIX: Point Ansible to the correct roles folder
                 export ANSIBLE_ROLES_PATH="$(pwd)/roles"
 
+                # 🔥 OVERRIDE SSH settings (DO NOT CHANGE YOUR INVENTORY)
+                export ANSIBLE_SSH_ARGS="-o ProxyJump=ubuntu@$BASTION -o IdentityFile=$SSH_KEY_FILE -o StrictHostKeyChecking=no"
+
                 ansible-playbook \
-                  -i inventory_aws_ec2.yml \
-                  playbooks/install_tools.yml \
-                  --private-key "$SSH_KEY_FILE" \
-                  --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
+                    -i inventory_aws_ec2.yml \
+                    playbooks/install_tools.yml \
+                    --private-key "$SSH_KEY_FILE" \
+                    --extra-vars "bastion_public_ip=$BASTION monitoring_bucket=$BUCKET aws_region=$REGION"
             '''
         }
     }
